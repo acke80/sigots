@@ -3,6 +3,9 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <type_traits>
+
+#include <iostream>
 
 namespace sigots {
 
@@ -17,28 +20,43 @@ private:
     
     private:
         slot_t m_slot;
-    
+        
+        virtual bool isEqual(Slot& slot) {
+            return
+                m_slot.target_type() == slot.m_slot.target_type() &&
+                m_slot.target<void(Args...)>() == slot.m_slot.target<void(Args...)>();
+        }
+
     public:
-        Slot(slot_t slot) : m_slot(slot) {}
+        Slot(const slot_t slot) : m_slot(slot) {}
 
         virtual void call(Args... args) {
             m_slot(args...);
         };
+
+        bool operator==(Slot& slot) {
+            return isEqual(slot);
+        }
     };
 
     template <typename T>
     class ObjectSlot : public Slot {
 
     private:
-        T& m_object;
+        T* m_object;
         void(T::* m_method)(Args...);
 
+        bool isEqual(Slot& slot) override {
+            bool b = m_object == static_cast<const ObjectSlot&>(slot).m_object;
+            return b;
+        }
+
     public:
-        ObjectSlot(T& object, void(T::* method)(Args...)) :
+        ObjectSlot(T* object, void(T::* method)(Args...)) :
             Slot(nullptr), m_object(object), m_method(method) {}
 
         void call(Args... args) override {
-            (m_object.*m_method)(args...);
+            (m_object->*m_method)(args...);
         };
     };
 
@@ -59,12 +77,28 @@ public:
     * @param slot   The member function of object to connect.
     */
     template <typename T>
-    void inline connect(T& object, void(T::*slot)(Args...)) {
+    void inline connect(T* object, void(T::*slot)(Args...)) {
+        static_assert(std::is_class<T>::value);
         m_slots.push_back(std::make_unique<ObjectSlot<T>>(object, slot));
     }
 
+    template <typename T>
+    void inline disconnect(T* object, void(T::* slot)(Args...)) {
+        static_assert(std::is_class<T>::value);
+        ObjectSlot os{ object, slot };
+        auto it = std::find_if(m_slots.begin(), m_slots.end(), [&](std::unique_ptr<Slot> const& s) {
+            return *s == os;
+        });
+
+        if (it != m_slots.end()) { 
+            m_slots.erase(it);
+        }
+    }
+
     void inline emit(Args... args) const {
+        std::cout << "emits: " << m_slots.size() << std::endl;
         for (auto& s : m_slots) {
+            std::cout << "slot: " << std::endl;
             s->call(args...);
         }
     }
